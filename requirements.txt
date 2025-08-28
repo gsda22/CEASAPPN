@@ -1,6 +1,6 @@
 streamlit
-sqlite3
-hashlib
 pandas
-PIL
-
+Pillow
+pytz
+babel
+openpyxl
