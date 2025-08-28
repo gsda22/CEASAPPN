@@ -5,6 +5,7 @@ import pandas as pd
 from PIL import Image
 import datetime
 import pytz
+import json
 from babel.dates import format_datetime
 
 # Configurar o fuso horário de Brasília
@@ -15,12 +16,13 @@ def init_db():
     conn = sqlite3.connect('ceasa.db')
     c = conn.cursor()
     
-    # Entidade forte: Usuários
+    # Entidade forte: Usuários com permissões
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   username TEXT UNIQUE NOT NULL,
                   password_hash TEXT NOT NULL,
-                  role TEXT NOT NULL,  -- admin, registrador, auditor
+                  role TEXT NOT NULL,
+                  permissions TEXT DEFAULT '["tab1", "tab2", "tab3", "tab4"]',  -- Lista de abas permitidas
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
     # Entidade forte: Lojas
@@ -33,10 +35,10 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   code TEXT UNIQUE,
                   name TEXT NOT NULL,
-                  category TEXT,  -- Herança potencial: ex., perecíveis
-                  unit TEXT NOT NULL)''')  # ex., kg, unidade
+                  category TEXT,
+                  unit TEXT NOT NULL)''')
     
-    # Entidade fraca: Registros (depende de produto, loja, usuário)
+    # Entidade fraca: Registros
     c.execute('''CREATE TABLE IF NOT EXISTS registrations
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   product_id INTEGER NOT NULL,
@@ -48,7 +50,7 @@ def init_db():
                   FOREIGN KEY (store_id) REFERENCES stores(id),
                   FOREIGN KEY (registered_by) REFERENCES users(id))''')
     
-    # Entidade fraca: Auditorias (depende de registro)
+    # Entidade fraca: Auditorias
     c.execute('''CREATE TABLE IF NOT EXISTS audits
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   registration_id INTEGER NOT NULL,
@@ -70,8 +72,8 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM users")
     if c.fetchone()[0] == 0:
         default_admin_pass = hashlib.sha256("123456".encode()).hexdigest()
-        c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                  ("admin", default_admin_pass, "admin"))
+        c.execute("INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)",
+                  ("admin", default_admin_pass, "admin", '["tab1", "tab2", "tab3", "tab4"]'))
     
     c.execute("SELECT COUNT(*) FROM stores")
     if c.fetchone()[0] == 0:
@@ -88,12 +90,12 @@ def hash_password(password):
 def check_credentials(username, password):
     conn = sqlite3.connect('ceasa.db')
     c = conn.cursor()
-    c.execute("SELECT password_hash, role FROM users WHERE username = ?", (username,))
+    c.execute("SELECT password_hash, role, permissions FROM users WHERE username = ?", (username,))
     result = c.fetchone()
     conn.close()
     if result and result[0] == hash_password(password):
-        return result[1]  # retorna o papel
-    return None
+        return result[1], json.loads(result[2])  # retorna o papel e as permissões
+    return None, None
 
 def get_stores():
     conn = sqlite3.connect('ceasa.db')
@@ -117,7 +119,7 @@ def get_unique_categories():
     c.execute("SELECT DISTINCT category FROM products WHERE category IS NOT NULL")
     categories = [row[0] for row in c.fetchall()]
     conn.close()
-    return ["Todas"] + sorted(categories)  # Adiciona "Todas" como opção padrão
+    return ["Todas"] + sorted(categories)
 
 def get_unique_users():
     conn = sqlite3.connect('ceasa.db')
@@ -125,7 +127,7 @@ def get_unique_users():
     c.execute("SELECT id, username FROM users")
     users = c.fetchall()
     conn.close()
-    return ["Todos"] + [f"{user[1]} (ID: {user[0]})" for user in users]  # Adiciona "Todos" e formata como "username (ID: id)"
+    return ["Todos"] + [f"{user[1]} (ID: {user[0]})" for user in users]
 
 def get_product_by_code(code):
     conn = sqlite3.connect('ceasa.db')
@@ -166,7 +168,6 @@ def get_registrations_without_audit():
         JOIN stores s ON r.store_id = s.id
         WHERE a.id IS NULL
     """, conn)
-    # Converter registered_at para horário de Brasília e formato brasileiro
     df['registered_at'] = pd.to_datetime(df['registered_at']).dt.tz_localize('UTC').dt.tz_convert(BRASILIA_TZ)
     df['registered_at'] = df['registered_at'].apply(lambda x: format_datetime(x, "dd/MM/yyyy HH:mm:ss", locale='pt_BR'))
     conn.close()
@@ -192,12 +193,10 @@ def get_divergent_products(category_filter=None, start_date=None, end_date=None,
     """
     params = []
     
-    # Filtro por seção
     if category_filter and category_filter != "Todas":
         query += " AND p.category = ?"
         params.append(category_filter)
     
-    # Filtro por intervalo de datas
     if start_date and end_date:
         query += " AND r.registered_at BETWEEN ? AND ?"
         params.extend([start_date, end_date])
@@ -208,7 +207,6 @@ def get_divergent_products(category_filter=None, start_date=None, end_date=None,
         query += " AND r.registered_at <= ?"
         params.append(end_date)
     
-    # Filtro por usuário
     if user_filter and user_filter != "Todos":
         user_id = int(user_filter.split(" (ID: ")[1].rstrip(")"))
         query += " AND r.registered_by = ?"
@@ -222,18 +220,19 @@ def get_divergent_products(category_filter=None, start_date=None, end_date=None,
 
 def get_users():
     conn = sqlite3.connect('ceasa.db')
-    df = pd.read_sql_query("SELECT id, username as usuário, role as papel, created_at as criado_em FROM users", conn)
-    # Converter created_at para horário de Brasília e formato brasileiro
+    df = pd.read_sql_query("SELECT id, username as usuário, role as papel, permissions as permissões, created_at as criado_em FROM users", conn)
     df['criado_em'] = pd.to_datetime(df['criado_em']).dt.tz_localize('UTC').dt.tz_convert(BRASILIA_TZ)
     df['criado_em'] = df['criado_em'].apply(lambda x: format_datetime(x, "dd/MM/yyyy HH:mm:ss", locale='pt_BR'))
+    df['permissões'] = df['permissões'].apply(json.loads)
     conn.close()
     return df
 
-def add_user(username, password, role):
+def add_user(username, password, role, permissions):
     conn = sqlite3.connect('ceasa.db')
     c = conn.cursor()
     pass_hash = hash_password(password)
-    c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", (username, pass_hash, role))
+    c.execute("INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)",
+              (username, pass_hash, role, json.dumps(permissions)))
     conn.commit()
     conn.close()
 
@@ -264,13 +263,11 @@ def upload_products(file):
     try:
         st.info("Iniciando o upload do arquivo Excel...")
         df = pd.read_excel(file)
-        # Verificar se as colunas necessárias existem
         required_columns = ['codigo', 'descricao', 'secao']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             st.error(f"Colunas ausentes no arquivo Excel: {', '.join(missing_columns)}")
             return False
-        # Verificar se há dados válidos
         if df.empty:
             st.error("O arquivo Excel está vazio.")
             return False
@@ -284,7 +281,7 @@ def upload_products(file):
             c.execute("SELECT id FROM products WHERE code = ?", (str(row['codigo']),))
             if not c.fetchone():
                 category = row.get('secao', 'Geral')
-                unit = 'kg'  # Valor padrão
+                unit = 'kg'
                 c.execute("INSERT INTO products (code, name, category, unit) VALUES (?, ?, ?, ?)",
                           (str(row['codigo']), row['descricao'], category, unit))
                 products_added += 1
@@ -309,7 +306,7 @@ init_db()
 st.set_page_config(page_title="Gerenciamento CEASA", page_icon="🍎", layout="wide")
 
 # Logo
-logo = Image.open("logo.png")  # Assume logo.png na mesma pasta
+logo = Image.open("logo.png")
 st.image(logo, width=200)
 
 # Calculadora na barra lateral
@@ -318,7 +315,7 @@ with st.sidebar:
     calc_input = st.text_input("Digite o cálculo (ex.: 25+25)", key="calculadora")
     if calc_input:
         try:
-            result = eval(calc_input)  # Avaliação simples, cuidado com entradas
+            result = eval(calc_input)
             st.write(f"Resultado: {result}")
         except:
             st.error("Cálculo inválido")
@@ -328,6 +325,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = None
     st.session_state.user_id = None
     st.session_state.username = None
+    st.session_state.permissions = None
 
 if not st.session_state.logged_in:
     st.title("Login")
@@ -337,12 +335,13 @@ if not st.session_state.logged_in:
         submit = st.form_submit_button("Entrar")
     
     if submit:
-        role = check_credentials(username, password)
+        role, permissions = check_credentials(username, password)
         if role:
             st.session_state.logged_in = True
             st.session_state.role = role
             st.session_state.username = username
             st.session_state.user_id = get_user_id(username)
+            st.session_state.permissions = permissions
             st.success("Login realizado com sucesso!")
             st.rerun()
         else:
@@ -354,6 +353,7 @@ else:
         st.session_state.role = None
         st.session_state.user_id = None
         st.session_state.username = None
+        st.session_state.permissions = None
         st.rerun()
     
     if st.session_state.role == "admin":
@@ -369,22 +369,23 @@ else:
                 elif submit_change:
                     st.sidebar.error("As senhas não coincidem")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["Registrar às Cegas", "Auditar", "Relatórios", "Gerenciar Usuários"])
+    # Definir abas com base nas permissões
+    tab_names = ["Registrar às Cegas", "Auditar", "Relatórios", "Gerenciar Usuários"]
+    tab_ids = ["tab1", "tab2", "tab3", "tab4"]
+    visible_tabs = [tab_names[i] for i, tab_id in enumerate(tab_ids) if tab_id in st.session_state.permissions]
+    tabs = st.tabs(visible_tabs)
     
-    with tab1:
+    with tabs[0] if "tab1" in st.session_state.permissions else st:
         if st.session_state.role in ["admin", "registrar"]:
             st.header("Registrar CEASA às Cegas")
-            
-            # Upload de arquivo Excel
             uploaded_file = st.file_uploader("Carregar arquivo Excel com produtos (colunas: codigo, descricao, secao)", type="xlsx", key="excel_uploader")
             if uploaded_file is not None:
                 with st.spinner("Processando o upload do Excel..."):
                     if upload_products(uploaded_file):
                         st.rerun()
                     else:
-                        st.stop()  # Para a execução se houver erro
+                        st.stop()
             
-            # Exibir tabela de produtos para depuração
             st.subheader("Produtos Cadastrados")
             products_df = get_all_products_df()
             if products_df.empty:
@@ -392,7 +393,6 @@ else:
             else:
                 st.dataframe(products_df)
             
-            # Input de código do produto
             product_code = st.text_input("Código do Produto", placeholder="Digite o código do produto (ex.: 001)", key="product_code_input")
             product_id = None
             if product_code:
@@ -434,7 +434,7 @@ else:
         else:
             st.error("Acesso negado.")
     
-    with tab2:
+    with tabs[1] if "tab2" in st.session_state.permissions else st:
         if st.session_state.role in ["admin", "auditor"]:
             st.header("Auditar Quantidade Recebida")
             regs = get_registrations_without_audit()
@@ -451,9 +451,8 @@ else:
         else:
             st.error("Acesso negado.")
     
-    with tab3:
+    with tabs[2] if "tab3" in st.session_state.permissions else st:
         st.header("Relatórios: Produtos com Maior Divergência")
-        # Filtros
         categories = get_unique_categories()
         selected_category = st.selectbox("Filtrar por Seção", categories, key="category_filter")
         
@@ -466,11 +465,9 @@ else:
             users = get_unique_users()
             selected_user = st.selectbox("Filtrar por Usuário", users, key="user_filter")
         
-        # Converter datas para formato do banco (UTC)
         start_date_str = start_date.strftime('%Y-%m-%d 00:00:00')
         end_date_str = end_date.strftime('%Y-%m-%d 23:59:59')
         
-        # Obter relatório com filtros
         div = get_divergent_products(
             category_filter=selected_category if selected_category != "Todas" else None,
             start_date=start_date_str if start_date else None,
@@ -482,7 +479,7 @@ else:
         else:
             st.dataframe(div)
     
-    with tab4:
+    with tabs[3] if "tab4" in st.session_state.permissions else st:
         if st.session_state.role == "admin":
             st.header("Gerenciar Usuários")
             users_df = get_users()
@@ -493,10 +490,22 @@ else:
                 new_username = st.text_input("Usuário")
                 new_password = st.text_input("Senha", type="password")
                 new_role = st.selectbox("Papel", ["registrador", "auditor", "admin"])
+                tab1 = st.checkbox("Registrar às Cegas", value=True)
+                tab2 = st.checkbox("Auditar", value=True)
+                tab3 = st.checkbox("Relatórios", value=True)
+                tab4 = st.checkbox("Gerenciar Usuários", value=True)
+                permissions = []
+                if tab1: permissions.append("tab1")
+                if tab2: permissions.append("tab2")
+                if tab3: permissions.append("tab3")
+                if tab4: permissions.append("tab4")
                 if st.form_submit_button("Adicionar"):
-                    add_user(new_username, new_password, new_role)
-                    st.success("Usuário adicionado!")
-                    st.rerun()
+                    if new_username and new_password:
+                        add_user(new_username, new_password, new_role, permissions)
+                        st.success("Usuário adicionado!")
+                        st.rerun()
+                    else:
+                        st.error("Usuário e senha são obrigatórios.")
             
             st.subheader("Excluir Usuário")
             del_user_id = st.number_input("ID do Usuário para Excluir", min_value=1)
