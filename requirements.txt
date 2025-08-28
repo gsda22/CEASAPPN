@@ -1,4 +1,5 @@
 streamlit
-pandas
-openpyxl
 sqlite3
+hashlib
+pandas
+PIL (Pillow)
