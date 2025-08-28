@@ -13,89 +13,103 @@ BRASILIA_TZ = pytz.timezone('America/Sao_Paulo')
 
 # Funções auxiliares
 def init_db():
-    conn = sqlite3.connect('ceasa.db')
-    c = conn.cursor()
-    
-    # Entidade forte: Usuários com permissões
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  username TEXT UNIQUE NOT NULL,
-                  password_hash TEXT NOT NULL,
-                  role TEXT NOT NULL,
-                  permissions TEXT DEFAULT '["tab1", "tab2", "tab3", "tab4"]',
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    
-    # Entidade forte: Lojas
-    c.execute('''CREATE TABLE IF NOT EXISTS stores
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  name TEXT UNIQUE NOT NULL)''')
-    
-    # Entidade forte: Produtos
-    c.execute('''CREATE TABLE IF NOT EXISTS products
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  code TEXT UNIQUE,
-                  name TEXT NOT NULL,
-                  category TEXT,
-                  unit TEXT NOT NULL)''')
-    
-    # Entidade fraca: Registros
-    c.execute('''CREATE TABLE IF NOT EXISTS registrations
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  product_id INTEGER NOT NULL,
-                  store_id INTEGER NOT NULL,
-                  quantity REAL NOT NULL,
-                  registered_by INTEGER NOT NULL,
-                  registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  FOREIGN KEY (product_id) REFERENCES products(id),
-                  FOREIGN KEY (store_id) REFERENCES stores(id),
-                  FOREIGN KEY (registered_by) REFERENCES users(id))''')
-    
-    # Entidade fraca: Auditorias
-    c.execute('''CREATE TABLE IF NOT EXISTS audits
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  registration_id INTEGER NOT NULL,
-                  actual_quantity REAL NOT NULL,
-                  audited_by INTEGER NOT NULL,
-                  audited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  FOREIGN KEY (registration_id) REFERENCES registrations(id),
-                  FOREIGN KEY (audited_by) REFERENCES users(id))''')
-    
-    # Verificar e adicionar coluna code se não existir
-    c.execute("PRAGMA table_info(products)")
-    columns = [info[1] for info in c.fetchall()]
-    if 'code' not in columns:
-        c.execute("ALTER TABLE products ADD COLUMN code TEXT UNIQUE")
-        c.execute("UPDATE products SET code = id WHERE code IS NULL")
-        st.warning("Coluna 'code' adicionada à tabela products. Códigos existentes foram preenchidos com IDs. Atualize os códigos manualmente, se necessário.")
-    
-    # Dados iniciais
-    c.execute("SELECT COUNT(*) FROM users")
-    if c.fetchone()[0] == 0:
-        default_admin_pass = hashlib.sha256("123456".encode()).hexdigest()
-        c.execute("INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)",
-                  ("admin", default_admin_pass, "admin", '["tab1", "tab2", "tab3", "tab4"]'))
-    
-    c.execute("SELECT COUNT(*) FROM stores")
-    if c.fetchone()[0] == 0:
-        stores = ["SUSSUCA", "VIDA NOVA", "ALPHAVILLE"]
-        for store in stores:
-            c.execute("INSERT INTO stores (name) VALUES (?)", (store,))
-    
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('ceasa.db')
+        c = conn.cursor()
+        
+        # Entidade forte: Usuários com permissões
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      username TEXT UNIQUE NOT NULL,
+                      password_hash TEXT NOT NULL,
+                      role TEXT NOT NULL,
+                      permissions TEXT DEFAULT '["tab1", "tab2", "tab3", "tab4"]',
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        
+        # Verificar se a coluna permissions existe
+        c.execute("PRAGMA table_info(users)")
+        columns = [info[1] for info in c.fetchall()]
+        if 'permissions' not in columns:
+            c.execute("ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '[\"tab1\", \"tab2\", \"tab3\", \"tab4\"]'")
+            st.warning("Coluna 'permissions' adicionada à tabela users.")
+
+        # Entidade forte: Lojas
+        c.execute('''CREATE TABLE IF NOT EXISTS stores
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      name TEXT UNIQUE NOT NULL)''')
+        
+        # Entidade forte: Produtos
+        c.execute('''CREATE TABLE IF NOT EXISTS products
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      code TEXT UNIQUE,
+                      name TEXT NOT NULL,
+                      category TEXT,
+                      unit TEXT NOT NULL)''')
+        
+        # Entidade fraca: Registros
+        c.execute('''CREATE TABLE IF NOT EXISTS registrations
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      product_id INTEGER NOT NULL,
+                      store_id INTEGER NOT NULL,
+                      quantity REAL NOT NULL,
+                      registered_by INTEGER NOT NULL,
+                      registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY (product_id) REFERENCES products(id),
+                      FOREIGN KEY (store_id) REFERENCES stores(id),
+                      FOREIGN KEY (registered_by) REFERENCES users(id))''')
+        
+        # Entidade fraca: Auditorias
+        c.execute('''CREATE TABLE IF NOT EXISTS audits
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      registration_id INTEGER NOT NULL,
+                      actual_quantity REAL NOT NULL,
+                      audited_by INTEGER NOT NULL,
+                      audited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY (registration_id) REFERENCES registrations(id),
+                      FOREIGN KEY (audited_by) REFERENCES users(id))''')
+        
+        # Verificar e adicionar coluna code se não existir
+        c.execute("PRAGMA table_info(products)")
+        columns = [info[1] for info in c.fetchall()]
+        if 'code' not in columns:
+            c.execute("ALTER TABLE products ADD COLUMN code TEXT UNIQUE")
+            c.execute("UPDATE products SET code = id WHERE code IS NULL")
+            st.warning("Coluna 'code' adicionada à tabela products. Códigos existentes foram preenchidos com IDs. Atualize os códigos manualmente, se necessário.")
+        
+        # Dados iniciais
+        c.execute("SELECT COUNT(*) FROM users")
+        if c.fetchone()[0] == 0:
+            default_admin_pass = hashlib.sha256("123456".encode()).hexdigest()
+            c.execute("INSERT INTO users (username, password_hash, role, permissions) VALUES (?, ?, ?, ?)",
+                      ("admin", default_admin_pass, "admin", '["tab1", "tab2", "tab3", "tab4"]'))
+        
+        c.execute("SELECT COUNT(*) FROM stores")
+        if c.fetchone()[0] == 0:
+            stores = ["SUSSUCA", "VIDA NOVA", "ALPHAVILLE"]
+            for store in stores:
+                c.execute("INSERT INTO stores (name) VALUES (?)", (store,))
+        
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        st.error(f"Erro ao inicializar o banco de dados: {str(e)}")
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def check_credentials(username, password):
-    conn = sqlite3.connect('ceasa.db')
-    c = conn.cursor()
-    c.execute("SELECT password_hash, role, permissions FROM users WHERE username = ?", (username,))
-    result = c.fetchone()
-    conn.close()
-    if result and result[0] == hash_password(password):
-        return result[1], json.loads(result[2])  # retorna o papel e as permissões
-    return None, None
+    try:
+        conn = sqlite3.connect('ceasa.db')
+        c = conn.cursor()
+        c.execute("SELECT password_hash, role, permissions FROM users WHERE username = ?", (username,))
+        result = c.fetchone()
+        conn.close()
+        if result and result[0] == hash_password(password):
+            return result[1], json.loads(result[2])  # retorna o papel e as permissões
+        return None, None
+    except sqlite3.Error as e:
+        st.error(f"Erro ao verificar credenciais: {str(e)}")
+        return None, None
 
 def get_stores():
     conn = sqlite3.connect('ceasa.db')
@@ -325,7 +339,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = None
     st.session_state.user_id = None
     st.session_state.username = None
-    st.session_state.permissions = []  # Valor padrão inicial
+    st.session_state.permissions = []
 
 if not st.session_state.logged_in:
     st.title("Login")
