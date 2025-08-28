@@ -2,4 +2,5 @@ streamlit
 sqlite3
 hashlib
 pandas
-PIL (Pillow)
+PIL
+
