@@ -22,7 +22,7 @@ def init_db():
                   username TEXT UNIQUE NOT NULL,
                   password_hash TEXT NOT NULL,
                   role TEXT NOT NULL,
-                  permissions TEXT DEFAULT '["tab1", "tab2", "tab3", "tab4"]',  -- Lista de abas permitidas
+                  permissions TEXT DEFAULT '["tab1", "tab2", "tab3", "tab4"]',
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
     # Entidade forte: Lojas
@@ -30,7 +30,7 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   name TEXT UNIQUE NOT NULL)''')
     
-    # Entidade forte: Produtos (com coluna code)
+    # Entidade forte: Produtos
     c.execute('''CREATE TABLE IF NOT EXISTS products
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   code TEXT UNIQUE,
@@ -325,7 +325,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = None
     st.session_state.user_id = None
     st.session_state.username = None
-    st.session_state.permissions = None
+    st.session_state.permissions = []  # Valor padrão inicial
 
 if not st.session_state.logged_in:
     st.title("Login")
@@ -353,7 +353,7 @@ else:
         st.session_state.role = None
         st.session_state.user_id = None
         st.session_state.username = None
-        st.session_state.permissions = None
+        st.session_state.permissions = []
         st.rerun()
     
     if st.session_state.role == "admin":
@@ -369,7 +369,7 @@ else:
                 elif submit_change:
                     st.sidebar.error("As senhas não coincidem")
     
-    # Definir abas com base nas permissões
+    # Definir abas com base nas permissões apenas se logado
     tab_names = ["Registrar às Cegas", "Auditar", "Relatórios", "Gerenciar Usuários"]
     tab_ids = ["tab1", "tab2", "tab3", "tab4"]
     visible_tabs = [tab_names[i] for i, tab_id in enumerate(tab_ids) if tab_id in st.session_state.permissions]
